@@ -905,8 +905,11 @@ function bindChartGestures(o) {
 function dateKey(ms) { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function noonOf(key) { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d, 12, 0, 0).getTime(); }
 const hm = (d) => d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
-// sun/moon events for the night starting at local noon `noon` (ms)
-function nightInfo(noon) {
+const hhmm = (ms) => { if (!ms) return ''; const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+// "HH:MM" on the plan's night -> ms (times before noon belong to the following morning)
+function windowMs(noon, t) { if (!t) return null; const [h, m] = t.split(':').map(Number); return noon + ((h < 12 ? h + 12 : h - 12) * 60 + m) * 60000; }
+// sun/moon events for the night starting at local noon `noon` (ms); win = optional {start, end} ms overriding darkness
+function nightInfo(noon, win) {
   const lat = S.loc.lat, lon = S.loc.lon;
   const sunAlt = (t) => { const p = Planets.compute(new Date(t), lat, lon)[0]; return altAz(p.ra, p.dec, new Date(t), lat, lon).alt; };
   const ev = { sunset: null, darkStart: null, darkEnd: null, sunrise: null };
@@ -931,6 +934,10 @@ function nightInfo(noon) {
   }
   ev.start = ev.darkStart || ev.sunset || new Date(noon + 8 * 3600000);
   ev.end = ev.darkEnd || ev.sunrise || new Date(noon + 18 * 3600000);
+  ev.custom = false;
+  if (win && win.start) { ev.start = new Date(win.start); ev.custom = true; }
+  if (win && win.end) { ev.end = new Date(win.end); ev.custom = true; }
+  if (ev.end <= ev.start) ev.end = new Date(ev.start.getTime() + 3600000);
   return ev;
 }
 // altitude track of an object across the night: transit time, max alt, hours above 30°
@@ -950,16 +957,17 @@ function nightTrack(o, ni) {
   return { best, above, first, transit: new Date(transit), inWindow, when: new Date(inWindow ? transit : best.t) };
 }
 function currentPlan() { return S.plans.find((p) => p.name === S.plan) || null; }
-function savePlan(p, msg) { return act({ 'put-plan': { name: p.name, date: p.date, site: p.site, targets: p.targets, notes: p.notes || '' } }, msg); }
+function savePlan(p, msg) { return act({ 'put-plan': { name: p.name, date: p.date, site: p.site, targets: p.targets, notes: p.notes || '', start: p.start || null, end: p.end || null } }, msg); }
+const planNight = (p) => nightInfo(p.date, { start: p.start, end: p.end });
 function addToPlan(id) {
   let p = currentPlan();
-  if (!p) { const name = `Night of ${dateKey(Date.now())}`; p = { name, date: noonOf(dateKey(Date.now())), site: S.site, targets: [], notes: '' }; S.plan = name; }
+  if (!p) { const name = `Night of ${dateKey(Date.now())}`; p = { name, date: noonOf(dateKey(Date.now())), site: S.site, targets: [], notes: '', start: null, end: null }; S.plan = name; }
   if (p.targets.includes(id)) { toast('Already on the plan'); return; }
   p.targets = [...p.targets, id];
   savePlan(p, `${S.byId.get(id)?.n || id} added to "${p.name}"`);
 }
 function suggestTargets(p, n = 25) {
-  const ni = nightInfo(p.date), have = new Set(p.targets);
+  const ni = planNight(p), have = new Set(p.targets);
   const moonBright = ni.moon.illum > 0.5 && ni.moonAltMid > 0;
   const out = [];
   for (const o of S.catalog) {
@@ -983,7 +991,7 @@ function renderPlan() {
       <div class="muted">A plan is a target list for one night. Add objects from their pages with "＋ Plan", or let the planner suggest targets that are well placed after dark.</div></div>`;
     bindPlanCommon(el); return;
   }
-  const ni = nightInfo(p.date);
+  const ni = planNight(p);
   const rows = p.targets.map((id) => { const o = S.byId.get(id); return o ? { o, tr: nightTrack(o, ni) } : null; }).filter(Boolean);
   const sorted = rows.slice().sort((a, b) => a.tr.when - b.tr.when);
   const sugg = suggestTargets(p, 20);
@@ -994,17 +1002,20 @@ function renderPlan() {
         <label>Date <input type="date" id="plan-date" value="${dateKey(p.date)}"></label>
         <label>Name <input id="plan-name" value="${esc(p.name)}"></label>
         <label>Site <input id="plan-site" value="${esc(p.site)}"></label>
+        <label>Start <input type="time" id="plan-start" value="${hhmm(p.start)}" placeholder="dark"> <small class="muted">blank = astronomical dark</small></label>
+        <label>End <input type="time" id="plan-end" value="${hhmm(p.end)}"> <small class="muted">blank = end of darkness</small></label>
         <label class="wide">Night notes <textarea id="plan-notes" placeholder="Weather, goals, equipment to bring…">${esc(p.notes || '')}</textarea></label>
         <label>&nbsp;<button id="plan-save" class="primary">Save</button></label>
       </div>
       <div class="night">
         <span><b>Sunset</b> ${hm(ni.sunset)}</span> <span><b>Dark</b> ${hm(ni.darkStart)} – ${hm(ni.darkEnd)}</span> <span><b>Sunrise</b> ${hm(ni.sunrise)}</span>
+        <span><b>Observing window</b> ${hm(ni.start)} – ${hm(ni.end)}${ni.custom ? '' : ' (darkness)'}</span>
         <span><b>Moon</b> ${Math.round(ni.moon.illum * 100)}% ${ni.moon.waxing ? 'waxing' : 'waning'}${ni.moonRise ? `, rises ${hm(ni.moonRise)}` : ''}${ni.moonSet ? `, sets ${hm(ni.moonSet)}` : ''}${ni.moonAltMid < 0 && !ni.moonRise ? ', down all night' : ''}</span>
         <span class="muted">lat ${S.loc.lat}, lon ${S.loc.lon} (Gear tab)</span>
       </div>
     </div>
     <div class="card"><h3>Targets (${rows.length}) <span class="muted" style="font-weight:400">in transit order</span></h3>
-      ${rows.length ? `<div class="muted" style="font-size:12px">* does not transit during darkness; time shown is when it is highest in the dark window.</div><table class="targets"><tr><th></th><th>Object</th><th>Type</th><th class="num">Mag</th><th class="num">Best at</th><th class="num">Max alt</th><th class="num">Hrs &gt;30°</th><th></th></tr>
+      ${rows.length ? `<div class="muted" style="font-size:12px">* does not transit during the window; time shown is when it is highest within it.</div><table class="targets"><tr><th></th><th>Object</th><th>Type</th><th class="num">Mag</th><th class="num">Best at</th><th class="num">Max alt</th><th class="num">Hrs &gt;30°</th><th></th></tr>
       ${sorted.map(({ o, tr }, i) => `<tr class="${tr.above < 0.5 ? 'poor' : ''}"><td class="num">${i + 1}</td><td><a href="#${esc(o.id)}" data-obj="${esc(o.id)}"><b>${esc(o.n)}</b></a>${o.cn ? ' <span class="muted">' + esc(o.cn[0]) + '</span>' : ''}${S.seen.has(o.id) ? ' <span class="badge seen">seen</span>' : ''}</td><td>${esc(TYPE_LABEL[o.t] || o.t)} · ${esc(conName(o.con))}</td><td class="num">${o.mag != null ? fmt(o.mag, 1) : '—'}</td><td class="num">${hm(tr.when)}${tr.inWindow ? '' : '*'}</td><td class="num">${tr.best.alt.toFixed(0)}°</td><td class="num">${tr.above.toFixed(1)}</td><td><button class="small danger" data-rm="${esc(o.id)}">×</button></td></tr>`).join('')}</table>` : '<div class="muted">No targets yet. Add from the suggestions below, search, or the "＋ Plan" button on any object.</div>'}
     </div>
     <div class="card"><h3>Add targets</h3>
@@ -1014,7 +1025,7 @@ function renderPlan() {
       ${sugg.length ? `<div class="chips">${sugg.map(({ o, tr }) => `<button class="small" data-add="${esc(o.id)}" title="${esc(TYPE_LABEL[o.t] || o.t)}, best ${hm(tr.when)}, max ${tr.best.alt.toFixed(0)}°">＋ ${esc(o.n)}${o.cn ? ' · ' + esc(o.cn[0]) : ''} <span class="muted">${o.mag != null ? fmt(o.mag, 1) : ''}</span></button>`).join('')}</div><div style="margin-top:6px"><button id="plan-add-all" class="small">Add all suggestions</button></div>` : '<div class="muted">Nothing left to suggest.</div>'}
     </div>`;
   bindPlanCommon(el);
-  $('#plan-save').onclick = () => { const np = { ...p, name: $('#plan-name').value || p.name, date: noonOf($('#plan-date').value), site: $('#plan-site').value, notes: $('#plan-notes').value }; if (np.name !== p.name) { act({ 'del-plan': p.name }); S.plan = np.name; } savePlan(np, 'Plan saved'); };
+  $('#plan-save').onclick = () => { const date = noonOf($('#plan-date').value); const np = { ...p, name: $('#plan-name').value || p.name, date, site: $('#plan-site').value, notes: $('#plan-notes').value, start: windowMs(date, $('#plan-start').value), end: windowMs(date, $('#plan-end').value) }; if (np.name !== p.name) { act({ 'del-plan': p.name }); S.plan = np.name; } savePlan(np, 'Plan saved'); };
   $('#plan-del').onclick = () => { if (confirm(`Delete plan "${p.name}"?`)) { S.plan = null; act({ 'del-plan': p.name }, 'Plan deleted'); } };
   $('#plan-print').onclick = () => openPrintView(p);
   $('#plan-q').oninput = (e) => { planSearch = e.target.value; renderPlan(); $('#plan-q').focus(); const v = $('#plan-q'); v.setSelectionRange(v.value.length, v.value.length); };
@@ -1025,12 +1036,12 @@ function renderPlan() {
 }
 function bindPlanCommon(el) {
   const ps = $('#plan-select'); if (ps) ps.onchange = () => { if (ps.value === '__new') { S.plan = null; renderPlan(); } else { S.plan = ps.value; renderPlan(); } };
-  const f = $('#plan-new'); if (f) f.onsubmit = (e) => { e.preventDefault(); const fd = new FormData(f); const name = fd.get('name') || `Night of ${fd.get('date')}`; S.plan = name; savePlan({ name, date: noonOf(fd.get('date')), site: fd.get('site') || '', targets: [], notes: '' }, 'Plan created'); };
+  const f = $('#plan-new'); if (f) f.onsubmit = (e) => { e.preventDefault(); const fd = new FormData(f); const name = fd.get('name') || `Night of ${fd.get('date')}`; S.plan = name; savePlan({ name, date: noonOf(fd.get('date')), site: fd.get('site') || '', targets: [], notes: '', start: null, end: null }, 'Plan created'); };
 }
 // ---- printable report
 async function openPrintView(p) {
   await ensureChartData();
-  const ni = nightInfo(p.date);
+  const ni = planNight(p);
   const rows = p.targets.map((id) => { const o = S.byId.get(id); return o ? { o, tr: nightTrack(o, ni) } : null; }).filter(Boolean).sort((a, b) => a.tr.when - b.tr.when);
   const pv = $('#print-view');
   const chartImg = (o, fov) => { const cv = document.createElement('canvas'); drawChart(o, { canvas: cv, size: 560, fov, telrad: true, mirror: false, ep: '', center: { ra: o.ra, dec: o.dec }, print: true }); return cv.toDataURL('image/png'); };
@@ -1040,14 +1051,14 @@ async function openPrintView(p) {
     <div class="print-tools"><button id="print-go" class="primary">🖨 Print / Save as PDF</button> <label><input type="checkbox" id="print-dss" checked> include DSS images</label> <label><input type="checkbox" id="print-notes" checked> notes lines</label> <button id="print-close">Close</button> <span class="muted">Tip: in the print dialog choose "Save as PDF", portrait, and turn on background graphics.</span></div>
     <div class="sheet cover">
       <h1>${esc(p.name)}</h1>
-      <div class="cover-meta">${new Date(p.date).toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}${p.site ? ' · ' + esc(p.site) : ''} · lat ${S.loc.lat}, lon ${S.loc.lon}</div>
-      <table class="night-table"><tr><th>Sunset</th><th>Astronomical dark</th><th>Sunrise</th><th>Moon</th></tr>
-        <tr><td>${hm(ni.sunset)}</td><td>${hm(ni.darkStart)} – ${hm(ni.darkEnd)}</td><td>${hm(ni.sunrise)}</td><td>${Math.round(ni.moon.illum * 100)}% ${ni.moon.waxing ? 'waxing' : 'waning'}${ni.moonRise ? `, rises ${hm(ni.moonRise)}` : ''}${ni.moonSet ? `, sets ${hm(ni.moonSet)}` : ''}</td></tr></table>
+      <div class="cover-meta">${new Date(p.date).toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}${p.site ? ' · ' + esc(p.site) : ''} · ${hm(ni.start)} – ${hm(ni.end)} · lat ${S.loc.lat}, lon ${S.loc.lon}</div>
+      <table class="night-table"><tr><th>Sunset</th><th>Astronomical dark</th><th>Observing window</th><th>Sunrise</th><th>Moon</th></tr>
+        <tr><td>${hm(ni.sunset)}</td><td>${hm(ni.darkStart)} – ${hm(ni.darkEnd)}</td><td>${hm(ni.start)} – ${hm(ni.end)}</td><td>${hm(ni.sunrise)}</td><td>${Math.round(ni.moon.illum * 100)}% ${ni.moon.waxing ? 'waxing' : 'waning'}${ni.moonRise ? `, rises ${hm(ni.moonRise)}` : ''}${ni.moonSet ? `, sets ${hm(ni.moonSet)}` : ''}</td></tr></table>
       ${p.notes ? `<div class="pnotes">${esc(p.notes)}</div>` : ''}
-      <h2>Targets in transit order</h2>
+      <h2>Targets in observing order</h2>
       <table class="targets"><tr><th>#</th><th>Object</th><th>Type</th><th>Con</th><th>RA</th><th>Dec</th><th>Mag</th><th>Size</th><th>Best at</th><th>Max alt</th><th>Seen</th></tr>
       ${rows.map(({ o, tr }, i) => `<tr><td>${i + 1}</td><td><b>${esc(o.n)}</b>${o.m ? ' (M ' + o.m + ')' : o.c ? ' (C ' + o.c + ')' : ''}${o.cn ? '<br><small>' + esc(o.cn[0]) + '</small>' : ''}</td><td>${esc(TYPE_LABEL[o.t] || o.t)}</td><td>${esc(o.con)}</td><td>${raStr(o.ra)}</td><td>${decStr(o.dec)}</td><td>${o.mag != null ? fmt(o.mag, 1) : '—'}</td><td>${esc(sizeStr(o))}</td><td>${hm(tr.when)}${tr.inWindow ? '' : '*'}</td><td>${tr.best.alt.toFixed(0)}°</td><td>☐</td></tr>`).join('')}</table>
-      <div class="ptip">* does not transit during darkness; shown at its highest point in the dark window.</div>
+      <div class="ptip">* does not transit during the observing window; shown at its highest point within it.</div>
       <div class="pfoot">Generated by astro on ~${S.ship} · ${new Date().toLocaleString()}</div>
     </div>
     ${rows.map(({ o, tr }, i) => `
@@ -1058,8 +1069,8 @@ async function openPrintView(p) {
         <div><span>Magnitude</span>${o.mag != null ? fmt(o.mag, 1) + (o.magb ? ' (B)' : '') + (o.mag2 != null ? ' / ' + fmt(o.mag2, 1) : '') : '—'}</div>
         <div><span>Size</span>${esc(sizeStr(o))}${o.pa != null ? ', PA ' + o.pa + '°' : ''}</div>
         ${o.sb != null ? `<div><span>Surface br.</span>${o.sb} mag/″²</div>` : ''}
-        <div><span>${tr.inWindow ? 'Transit' : 'Highest (dark)'}</span>${hm(tr.when)} at ${tr.best.alt.toFixed(0)}° alt</div>
-        <div><span>Above 30°</span>${tr.above.toFixed(1)} h${tr.first ? ' from ' + hm(new Date(tr.first)) : ''}</div>
+        <div><span>${tr.inWindow ? 'Transit' : 'Highest in window'}</span>${hm(tr.when)} at ${tr.best.alt.toFixed(0)}° alt</div>
+        <div><span>Above 30° in window</span>${tr.above.toFixed(1)} h${tr.first ? ' from ' + hm(new Date(tr.first)) : ''}</div>
       </div>
       ${o.notes ? `<div class="ptip">${esc(o.notes)}</div>` : ''}
       <div class="phints">${hintText(o)}</div>

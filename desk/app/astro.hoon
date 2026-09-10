@@ -13,9 +13,20 @@
 |%
 +$  versioned-state
   $%  state-0
+      state-1
   ==
 +$  state-0
   $:  %0
+      obs=(map id observation)
+      next=id
+      scopes=(map @t scope)
+      eyepieces=(map @t eyepiece)
+      rigs=(map @t rig)
+      site=@t
+      plans=(map @t plan-0)
+  ==
++$  state-1
+  $:  %1
       obs=(map id observation)
       next=id
       scopes=(map @t scope)
@@ -54,7 +65,7 @@
   ==
 --
 ::
-=|  state-0
+=|  state-1
 =*  state  -
 %-  agent:dbug
 ^-  agent:gall
@@ -78,7 +89,12 @@
   ^-  (quip card _this)
   =/  ver  !<(versioned-state old)
   ?-  -.ver
-    %0  [~ this(state ver)]
+    %1  [~ this(state ver)]
+    %0
+    =/  plans=(map @t plan)
+      %-  ~(run by plans.ver)
+      |=(p=plan-0 ^-(plan [name.p date.p site.p targets.p notes.p ~ ~]))
+    [~ this(state [%1 obs.ver next.ver scopes.ver eyepieces.ver rigs.ver site.ver plans])]
   ==
 ::
 ++  on-poke

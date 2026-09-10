@@ -48,12 +48,21 @@
   ==
 ::  $plan: a target list for one night
 ::
++$  plan-0
+  $:  name=@t
+      date=@da
+      site=@t
+      targets=(list @t)
+      notes=@t
+  ==
 +$  plan
   $:  name=@t
       date=@da           ::  local noon of the observing date (as unix ms from the UI)
       site=@t
       targets=(list @t)  ::  catalog ids, in observing order
       notes=@t
+      start=(unit @da)   ::  observing window; ~ means astronomical darkness
+      end=(unit @da)
   ==
 ::
 +$  action

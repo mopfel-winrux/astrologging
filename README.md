@@ -34,9 +34,10 @@ filters) and can be added to a home screen via the web manifest.
 
 **Night plans.** The Plan tab keeps target lists per night on the ship
 (`plans` in agent state). For a date and your site it computes sunset,
-astronomical darkness, sunrise, moon phase and rise/set, orders targets by
-transit (or by their highest point in the dark window), and suggests unseen,
-well-placed objects (bright-moon nights get clusters, doubles and
+astronomical darkness, sunrise, moon phase and rise/set. An optional
+observing window (start and end time; blank means astronomical darkness)
+drives everything else: targets are ordered by transit, or by their highest
+point inside the window, and the planner suggests unseen, well-placed objects (bright-moon nights get clusters, doubles and
 planetaries). **Print / PDF** opens a print preview: a cover sheet with the
 night's timings and target table, then one A4 sheet per target with facts,
 eyepiece picks for your first two scopes, a 10° Telrad finder chart and a 2°
@@ -89,7 +90,7 @@ Pokes take mark `%astro-action` or `%json`:
 {"put-eyepiece": {"name":"…","focal":250,"afov":52,"notes":""}}   (focal in 0.1 mm)  {"del-eyepiece":"name"}
 {"put-rig": {"name":"…","optics":"…","camera":"…","mount":"…","filters":"…","notes":""}}   {"del-rig":"name"}
 {"set-site": "Backyard"}
-{"put-plan": {"name":"Night of 2026-09-12","date":1757692800000,"site":"Club","targets":["NGC7000","SOL-Saturn"],"notes":""}}
+{"put-plan": {"name":"Night of 2026-09-12","date":1757692800000,"site":"Club","targets":["NGC7000","SOL-Saturn"],"notes":"","start":null,"end":1757739600000}}
 {"del-plan": "Night of 2026-09-12"}
 ```
 
@@ -107,6 +108,13 @@ ids (`NGC0224`, `IC0434`, `B033`, `SH2-155`, `LDN1773`, `HR7001`, `DBL-Albireo`)
 `tools/mcp.sh` drives the ship through [urbit-mcp](https://github.com/gwbtc/urbit-mcp)
 if you have it installed; it reads the auth cookie from `$ASTRO_COOKIE`, a
 `.ship-cookie` file, or `SHIP.md` (all git-ignored).
+
+## State versions
+
+Agent state is versioned (`state-0`, `state-1`, …) with an `on-load` migration
+for each step, so upgrades keep observations, gear and plans. `state-1` added
+the plan observing window. Add new fields as a new `state-N` plus a migration
+arm; never edit an old state type.
 
 ## Developing
 

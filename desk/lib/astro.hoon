@@ -77,6 +77,8 @@
         site+s+site.p
         targets+a+(turn targets.p |=(t=@t s+t))
         notes+s+notes.p
+        start+?~(start.p ~ (time u.start.p))
+        end+?~(end.p ~ (time u.end.p))
     ==
   ::
   ++  plans
@@ -139,7 +141,7 @@
   ::
   ++  plan
     ^-  $-(json plan:astro)
-    (ot name+so date+di site+so targets+(ar so) notes+so ~)
+    (ot name+so date+di site+so targets+(ar so) notes+so start+(mu di) end+(mu di) ~)
   ::
   ++  action
     |=  jon=json
