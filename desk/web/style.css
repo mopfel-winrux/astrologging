@@ -172,6 +172,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 dialog { background: var(--bg2); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; max-width: 720px; width: 95vw; }
 dialog::backdrop { background: rgba(0,0,0,.6); }
 
+#net { color: var(--warn); border-color: var(--warn); cursor: pointer; }
+.obs.pending { border-left-style: dashed; }
 /* plan */
 .night { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 6px; font-size: 13.5px; color: var(--fg2); }
 .night b { color: var(--fg); font-weight: 600; }
@@ -232,6 +234,7 @@ body.printing { background: #e6e6e6; }
   header { padding: 6px 10px; gap: 8px; }
   header h1 span { display: none; }
   #status { display: none; }
+  #net { display: inline-block; }
   header nav {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
     background: var(--bg2); border-top: 1px solid var(--line);

@@ -36,7 +36,7 @@ const S = {
   seen: new Map(),        // obj id -> {count, imaged}
   sel: null, query: '', filters: { family: '', src: '', seen: '', maxmag: '' }, sort: 'number', planets: [], mobile: false,
   chart: { fov: 5, telrad: false, mirror: false, ep: '' },
-  plans: [], plan: null,
+  plans: [], plan: null, offline: false, installEvt: null,
   loc: { lat: 34.7, lon: -80.6 },
 };
 
@@ -96,8 +96,10 @@ async function poke(json) {
   const id = ++chan.seq;
   const body = [{ id, action: 'poke', ship: S.ship, app: 'astro', mark: 'json', json }];
   const p = new Promise((res, rej) => chan.pending.set(id, { res, rej }));
-  const r = await fetch(`/~/channel/${chan.id}`, { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } });
-  if (!r.ok) { chan.pending.delete(id); throw new Error(`channel PUT ${r.status}`); }
+  let r;
+  try { r = await fetch(`/~/channel/${chan.id}`, { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }); }
+  catch (e) { chan.pending.delete(id); const err = new Error('ship unreachable'); err.network = true; throw err; }
+  if (!r.ok) { chan.pending.delete(id); const err = new Error(`channel PUT ${r.status}`); err.network = r.status >= 500 || r.status === 0; throw err; }
   if (!chan.es) openChannel();
   // if the event stream never answers, resolve anyway after a moment and refresh
   setTimeout(() => { const pd = chan.pending.get(id); if (pd) { chan.pending.delete(id); pd.res('timeout'); } }, 2500);
@@ -117,13 +119,84 @@ function openChannel() {
   es.onerror = () => { es.close(); chan.es = null; };
 }
 async function act(json, msg) {
+  if (S.offline || !navigator.onLine) { queueLocal(json, msg); return; }
   try { await poke(json); await loadState(); if (msg) toast(msg); render(); }
-  catch (e) { toast(`Ship rejected: ${e.message}`, true); console.error(e); }
+  catch (e) {
+    if (e.network) { S.offline = true; queueLocal(json, msg); return; }
+    toast(`Ship rejected: ${e.message}`, true); console.error(e);
+  }
+}
+// ---- offline queue: actions taken while the ship is unreachable are applied locally and replayed later
+const Q = { key: 'astro-queue', items: [] };
+let tempId = -1;
+function loadQueue() { try { Q.items = JSON.parse(localStorage.getItem(Q.key) || '[]'); } catch { Q.items = []; } for (const it of Q.items) if (it.json['add-obs']) tempId = Math.min(tempId, (it.tid || 0) - 1); }
+function saveQueue() { try { localStorage.setItem(Q.key, JSON.stringify(Q.items)); } catch {} }
+function queueLocal(json, msg) {
+  const k = Object.keys(json)[0], v = json[k];
+  // edits/deletes of an observation that only exists in the queue fold into its queued add
+  if ((k === 'edit-obs' && v.id < 0) || (k === 'del-obs' && v < 0)) {
+    const tid = k === 'edit-obs' ? v.id : v;
+    const i = Q.items.findIndex((it) => it.tid === tid);
+    if (i >= 0) { if (k === 'del-obs') Q.items.splice(i, 1); else Q.items[i].json = { 'add-obs': v.observation }; }
+    saveQueue(); applyLocal(json); render(); renderNet(); toast('Saved offline'); return;
+  }
+  const it = { json, t: Date.now() };
+  if (k === 'add-obs') it.tid = tempId;
+  Q.items.push(it); saveQueue(); applyLocal(json); render(); renderNet();
+  toast(`${msg || 'Saved'} — offline, will sync to the ship`);
+}
+function applyLocal(json) {
+  const k = Object.keys(json)[0], v = json[k];
+  const upsert = (list, item) => { const i = list.findIndex((x) => x.name === item.name); if (i >= 0) list[i] = item; else list.push(item); };
+  switch (k) {
+    case 'add-obs': S.obs.push({ ...v, id: tempId--, _pending: true }); break;
+    case 'edit-obs': { const o = S.obs.find((x) => x.id === v.id); if (o) Object.assign(o, v.observation, { _pending: true }); break; }
+    case 'del-obs': S.obs = S.obs.filter((x) => x.id !== v); break;
+    case 'put-scope': upsert(S.gear.scopes, v); break;
+    case 'del-scope': S.gear.scopes = S.gear.scopes.filter((x) => x.name !== v); break;
+    case 'put-eyepiece': upsert(S.gear.eyepieces, v); break;
+    case 'del-eyepiece': S.gear.eyepieces = S.gear.eyepieces.filter((x) => x.name !== v); break;
+    case 'put-rig': upsert(S.gear.rigs, v); break;
+    case 'del-rig': S.gear.rigs = S.gear.rigs.filter((x) => x.name !== v); break;
+    case 'put-plan': upsert(S.plans, v); if (!S.plan) S.plan = v.name; break;
+    case 'del-plan': S.plans = S.plans.filter((x) => x.name !== v); if (S.plan === v) S.plan = null; break;
+    case 'set-site': S.site = v; break;
+  }
+  rebuildSeen();
+}
+let flushing = false;
+async function flushQueue() {
+  if (flushing || !Q.items.length || !navigator.onLine) return;
+  flushing = true; let sent = 0;
+  try {
+    while (Q.items.length) {
+      const it = Q.items[0];
+      try { await poke(it.json); Q.items.shift(); saveQueue(); sent++; }
+      catch (e) { if (e.network) { S.offline = true; break; } toast(`Ship rejected a queued change: ${e.message}`, true); Q.items.shift(); saveQueue(); }
+    }
+    if (sent) { try { await loadState(); render(); toast(`Synced ${sent} change${sent > 1 ? 's' : ''} to the ship`); } catch {} }
+  } finally { flushing = false; renderNet(); }
+}
+function renderNet() {
+  const el = $('#net'); if (!el) return;
+  const n = Q.items.length;
+  el.hidden = !S.offline && !n;
+  el.textContent = S.offline ? `offline${n ? ` · ${n} queued` : ''}` : `${n} to sync`;
+  el.onclick = () => flushQueue();
+}
+function rebuildSeen() {
+  S.seen = new Map();
+  for (const o of S.obs) {
+    const e = S.seen.get(o.obj) || { count: 0, imaged: false, last: 0 };
+    e.count++; e.imaged = e.imaged || o.imaged; e.last = Math.max(e.last, o.when); S.seen.set(o.obj, e);
+  }
 }
 async function loadState() {
-  const r = await fetch('/~/scry/astro/state.json', { cache: 'no-store' });
-  if (!r.ok) throw new Error(`state scry ${r.status}`);
+  let r;
+  try { r = await fetch('/~/scry/astro/state.json', { cache: 'no-store' }); } catch (e) { S.offline = true; renderNet(); const err = new Error('ship unreachable'); err.network = true; throw err; }
+  if (!r.ok) { S.offline = true; renderNet(); const err = new Error(`state scry ${r.status}`); err.network = r.status >= 500; throw err; }
   const st = await r.json();
+  S.offline = false;
   S.ship = String(st.ship || '~zod').replace(/^~/, '');
   S.site = st.site || ''; S.obs = st.obs || []; S.gear = st.gear || { scopes: [], eyepieces: [], rigs: [] };
   S.plans = (st.plans || []).sort((a, b) => b.date - a.date);
@@ -132,11 +205,8 @@ async function loadState() {
   S.gear.scopes.sort((a, b) => a.name.localeCompare(b.name));
   S.gear.eyepieces.sort((a, b) => b.focal - a.focal);
   S.gear.rigs.sort((a, b) => a.name.localeCompare(b.name));
-  S.seen = new Map();
-  for (const o of S.obs) {
-    const e = S.seen.get(o.obj) || { count: 0, imaged: false, last: 0 };
-    e.count++; e.imaged = e.imaged || o.imaged; e.last = Math.max(e.last, o.when); S.seen.set(o.obj, e);
-  }
+  for (const it of Q.items) applyLocal(it.json);   // re-overlay anything not yet synced
+  rebuildSeen(); renderNet();
 }
 
 // ------------------------------------------------------------ search
@@ -489,7 +559,7 @@ function renderObsList(list) {
   return list.slice().sort((a, b) => b.when - a.when).map((x) => {
     const o = S.byId.get(x.obj);
     const meta = [x.site, x.scope, x.eyepiece, x.seeing ? `seeing ${x.seeing}/5` : '', x.transparency ? `transp ${x.transparency}/5` : '', x.imaged ? `📷 ${x.rig || 'imaged'}` : ''].filter(Boolean).join(' · ');
-    return `<div class="obs${x.imaged ? ' imaged' : ''}" data-id="${x.id}">
+    return `<div class="obs${x.imaged ? ' imaged' : ''}${x._pending ? ' pending' : ''}" data-id="${x.id}">${x._pending ? '<span class="badge">not synced</span>' : ''}
       <span class="ctl"><button class="small" data-edit="${x.id}">edit</button> <button class="small danger" data-del="${x.id}">delete</button></span>
       <div class="head"><span class="when">${new Date(x.when).toLocaleString()}</span>${o ? `<a href="#" data-obj="${esc(o.id)}"><b>${esc(o.n)}</b>${o.cn ? ' ' + esc(o.cn[0]) : ''}</a>` : esc(x.obj)}</div>
       <div class="meta">${esc(meta)}</div>
@@ -582,6 +652,10 @@ function renderGear() {
       </div>
       <div class="muted">Site name is stored on the ship; latitude/longitude stay in this browser and drive the altitude figures.</div>
     </div>
+    <div class="card"><h3>Phone app &amp; offline</h3>
+      <div class="tip">${window.matchMedia('(display-mode: standalone)').matches ? 'Running as an installed app.' : S.installEvt ? '<button id="install-app" class="primary">Install as an app</button> &nbsp; adds it to your home screen, full screen, works offline.' : 'To install: on iPhone open this page in Safari and use Share → <b>Add to Home Screen</b>; on Android use the browser menu → <b>Add to Home screen</b> / <b>Install app</b>.'}</div>
+      <div class="tip">${'serviceWorker' in navigator ? 'Offline mode: the catalog, charts and your last-loaded log are cached on this device. Observations made while the ship is unreachable are queued and synced when it is back.' : 'This browser does not support offline mode (needs HTTPS or localhost).'}${Q.items.length ? ` <b>${Q.items.length} change${Q.items.length > 1 ? 's' : ''} waiting to sync</b> <button id="sync-now" class="small">Sync now</button>` : ''}</div>
+    </div>
     <div class="card"><h3>Telescopes</h3>
       <table><tr><th>Name</th><th>Kind</th><th class="num">Aperture</th><th class="num">Focal length</th><th class="num">f/</th><th>Notes</th><th></th></tr>
       ${g.scopes.map((s) => `<tr><td>${esc(s.name)}</td><td>${esc(s.kind)}</td><td class="num">${s.aperture} mm</td><td class="num">${s.focal} mm</td><td class="num">${(s.focal / s.aperture).toFixed(1)}</td><td>${esc(s.notes)}</td><td><button class="small" data-edit-scope="${esc(s.name)}">edit</button> <button class="small danger" data-del-scope="${esc(s.name)}">×</button></td></tr>`).join('')}</table>
@@ -619,6 +693,8 @@ function renderGear() {
       </form>
     </div>`;
   const fill = (form, obj) => { for (const [k, v] of Object.entries(obj)) { const i = form.elements[k]; if (i) i.value = v; } form.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+  const ia = $('#install-app'); if (ia) ia.onclick = async () => { S.installEvt.prompt(); const r = await S.installEvt.userChoice; if (r.outcome === 'accepted') { S.installEvt = null; renderGear(); } };
+  const sn = $('#sync-now'); if (sn) sn.onclick = () => flushQueue();
   $('#site-save').onclick = () => {
     S.loc = { lat: Number($('#loc-lat').value), lon: Number($('#loc-lon').value) };
     try { localStorage.setItem('astro-loc', JSON.stringify(S.loc)); } catch {}
@@ -986,13 +1062,20 @@ function showTab(name) {
 // ------------------------------------------------------------ init
 async function init() {
   try { const l = JSON.parse(localStorage.getItem('astro-loc') || 'null'); if (l) S.loc = l; if (localStorage.getItem('astro-night') === '1') document.body.classList.add('night'); } catch {}
+  loadQueue();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/astro/sw.js', { scope: '/astro/' }).catch((e) => console.warn('sw', e));
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; renderGear(); });
+  window.addEventListener('online', () => { S.offline = false; flushQueue(); });
+  window.addEventListener('offline', () => { S.offline = true; renderNet(); });
   $('#status').textContent = 'loading catalog…';
   const [cat, lines] = await Promise.all([fetch('/astro/data/catalog.jsn').then((r) => r.json()), fetch('/astro/data/lines.jsn').then((r) => r.json())]);
   S.catalog = cat; S.lines = lines; for (const [ab, name] of lines.names) S.conNames[ab] = name;
   prepCatalog();
   refreshPlanets();
   const mq = window.matchMedia('(max-width: 720px)'); S.mobile = mq.matches; mq.onchange = () => { S.mobile = mq.matches; };
-  try { await loadState(); } catch (e) { toast(`Could not reach the ship: ${e.message}`, true); }
+  try { await loadState(); } catch (e) { toast(`Ship unreachable — working offline from cached data`, true); for (const it of Q.items) applyLocal(it.json); }
+  setInterval(() => { if (Q.items.length) flushQueue(); else if (S.offline) loadState().then(render).catch(() => {}); }, 60000);
+  flushQueue();
   // controls
   const q = $('#q'); q.oninput = () => { S.query = q.value; renderList(); };
   q.onkeydown = (e) => { if (e.key === 'Enter' && listCache.length) selectObject(listCache[0].id); };

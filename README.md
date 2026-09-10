@@ -43,6 +43,14 @@ eyepiece picks for your first two scopes, a 10° Telrad finder chart and a 2°
 eyepiece chart (black-on-white), the DSS2 image, and lines for notes. Use the
 browser's print dialog and "Save as PDF".
 
+**Phone app / offline.** `web/sw.js` is a service worker that caches the
+app shell and the catalog, so the page installs as a home-screen app (PNG
+icons + `manifest.json`) and opens with no signal. Changes made while the ship
+is unreachable are queued in the browser, applied to the local view, and
+replayed to the ship in order when it is back (a badge in the header shows the
+queue; tap it to sync). Service workers need HTTPS or `localhost`, so on a real
+ship use its https address.
+
 Everything is rebuilt by `tools/build_catalog.py` (needs `astropy`, `numpy`)
 from `vendor/OpenNGC`, `data-src/`, and `~/Research/stargazer/data`.
 
@@ -58,7 +66,7 @@ desk/                      the %astro desk (rsync'd to zod/astro, then |commit)
   mar/astro/{action,update}.hoon   marks
   mar/jsn.hoon             raw-bytes JSON mark so the 3 MB catalog is never parsed on-ship
   web/index.html, app.js, planets.js, style.css   the single-page UI (no build step)
-  web/tile.svg, manifest.json  Landscape tile image and PWA manifest
+  web/tile.svg, icon-*.png, manifest.json, sw.js   Landscape tile, PWA icons/manifest, service worker
   desk.docket-0 + sur/lib/mar docket   Landscape tile (site+/astro, no glob)
   web/data/{catalog,stars,lines}.jsn  generated data
 tools/build_catalog.py     builds web/data
