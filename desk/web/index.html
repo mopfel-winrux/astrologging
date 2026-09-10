@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>astro · observing log</title>
+  <meta name="theme-color" content="#0b0e14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" href="/astro/tile.svg">
+  <link rel="apple-touch-icon" href="/astro/tile.svg">
+  <link rel="manifest" href="/astro/manifest.json" crossorigin="use-credentials">
+  <link rel="stylesheet" href="/astro/style.css">
+</head>
+<body>
+  <header>
+    <h1>astro<span>observing log</span></h1>
+    <nav>
+      <button data-tab="objects" class="active">Objects</button>
+      <button data-tab="plan">Plan</button>
+      <button data-tab="log">Log</button>
+      <button data-tab="gear">Gear</button>
+      <button data-tab="stats">Stats</button>
+    </nav>
+    <div class="spacer"></div>
+    <span id="status"></span>
+    <input id="dim" type="range" min="0" max="0.85" step="0.05" value="0" title="Dim the screen">
+    <button id="night" title="Red night-vision mode (press N)">🔴 Night</button>
+  </header>
+  <main>
+    <section id="tab-objects" class="tab active">
+      <div class="searchbar">
+        <input id="q" type="search" placeholder="Search: M 31, NGC 7000, Horsehead, B 33, Jupiter, Albireo…" autocomplete="off">
+        <button id="filters-toggle" class="only-mobile">Filters</button>
+        <div class="filters">
+        <select id="f-family"></select>
+        <select id="f-src"></select>
+        <select id="f-seen"><option value="">Seen or not</option><option value="unseen">Not yet seen</option><option value="seen">Seen</option><option value="imaged">Imaged</option></select>
+        <select id="f-maxmag"><option value="">Any brightness</option><option value="6">mag ≤ 6</option><option value="8">mag ≤ 8</option><option value="10">mag ≤ 10</option><option value="12">mag ≤ 12</option><option value="14">mag ≤ 14</option></select>
+        <select id="f-sort"><option value="number">Sort: number</option><option value="mag">Sort: brightest</option><option value="size">Sort: largest</option><option value="alt">Sort: highest now</option></select>
+        </div>
+      </div>
+      <div class="split">
+        <div id="list" class="list"></div>
+        <div id="detail" class="detail"></div>
+      </div>
+    </section>
+    <section id="tab-log" class="tab">
+      <div class="searchbar">
+        <input id="log-search" type="search" placeholder="Filter observations…">
+        <label><input id="log-imaged" type="checkbox"> imaged only</label>
+        <button id="export-csv">Export CSV</button>
+        <button id="export-json">Export JSON</button>
+      </div>
+      <div id="log-list"></div>
+    </section>
+    <section id="tab-plan" class="tab"><div id="plan"></div></section>
+    <section id="tab-gear" class="tab"><div id="gear"></div></section>
+    <section id="tab-stats" class="tab"><div id="stats"></div></section>
+  </main>
+  <dialog id="obs-dialog"></dialog>
+  <div id="print-view"></div>
+  <script src="/astro/planets.js"></script>
+  <script src="/astro/app.js"></script>
+</body>
+</html>

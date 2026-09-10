@@ -1,0 +1,10 @@
+:~  title+'Astro Log'
+    info+'Deep-sky observing log: search 16k objects, log what you saw, finder charts and magnification hints.'
+    color+0xb.0e14
+    image+'/astro/tile.svg'
+    version+[0 1 0]
+    website+'http://localhost:8081/astro'
+    license+'MIT'
+    base+'astro'
+    site+/astro
+==

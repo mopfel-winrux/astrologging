@@ -1,0 +1,9 @@
+# the fakezod pier and other repos checked out alongside
+zod/
+vendor/
+urbit-mcp/
+# local ship notes (contains the session cookie)
+SHIP.md
+.ship-cookie
+__pycache__/
+*.pyc
