@@ -431,10 +431,39 @@ function render() {
   $('#status').textContent = `~${S.ship} · ${S.catalog.length.toLocaleString()} objects · ${S.obs.length} observations`;
 }
 let listCache = [];
+function activeFilters() {
+  const f = S.filters, out = [];
+  if (f.family) out.push(FAMILY_LABEL[f.family] || f.family);
+  if (f.src) out.push(f.src === 'M' ? 'Messier' : f.src === 'C' ? 'Caldwell' : SRC_LABEL[f.src] || f.src);
+  if (f.seen) out.push({ unseen: 'not yet seen', seen: 'seen', imaged: 'imaged' }[f.seen]);
+  if (f.maxmag !== '') out.push(`mag ≤ ${f.maxmag}`);
+  return out;
+}
+function clearFilters() {
+  S.filters = { family: '', src: '', seen: '', maxmag: '' };
+  for (const id of ['f-family', 'f-src', 'f-seen', 'f-maxmag']) $('#' + id).value = '';
+  renderList(); updateFilterButton();
+}
+function updateFilterButton() {
+  const b = $('#filters-toggle'); if (!b) return;
+  const n = activeFilters().length, open = $('.searchbar').classList.contains('open');
+  b.textContent = open ? 'Hide filters' : n ? `Filters (${n})` : 'Filters';
+  b.classList.toggle('active', n > 0);
+}
 function renderList() {
   const res = search(S.query, S.filters); listCache = res;
   const el = $('#list'); const max = 300;
-  if (!res.length) { el.innerHTML = '<div class="empty">No matches. Try "M 31", "NGC 7000", "Horsehead", "B 33", "Sh2-155", "LDN 1773", "Albireo"…</div>'; return; }
+  if (!res.length) {
+    const f = S.filters, active = activeFilters();
+    let hint = '';
+    if (active.length) {
+      const without = search(S.query, { family: '', src: '', seen: '', maxmag: '' }).length;
+      hint = `<div>${without ? `${without} match${without > 1 ? 'es' : ''} hidden by` : 'Active'} filter${active.length > 1 ? 's' : ''}: <b>${esc(active.join(', '))}</b></div><button id="clear-filters" class="small primary" style="margin-top:6px">Clear filters</button>`;
+    }
+    el.innerHTML = `<div class="empty">No matches${S.query ? ` for "${esc(S.query)}"` : ''}. ${hint || 'Try "M 31", "NGC 7000", "Horsehead", "B 33", "Sh2-155", "LDN 1773", "Albireo"…'}</div>`;
+    const cf = $('#clear-filters'); if (cf) cf.onclick = clearFilters;
+    return;
+  }
   el.innerHTML = res.slice(0, max).map((o) => {
     const sn = S.seen.get(o.id);
     return `<div class="row${S.sel === o.id ? ' sel' : ''}" data-id="${esc(o.id)}">
@@ -936,10 +965,9 @@ function suggestTargets(p, n = 25) {
   for (const o of S.catalog) {
     if (have.has(o.id) || S.seen.has(o.id) || o.src === 'SOL') continue;
     if (!(o.m || o.c || o.cn || o.src === 'DBL')) continue;
-    if (o.mag == null || o.mag > (moonBright ? 8 : 10.5)) continue;
     if (moonBright && !['open', 'globular', 'double', 'planetary'].includes(familyOf(o))) continue;
     const tr = nightTrack(o, ni); if (tr.above < 1) continue;
-    out.push({ o, tr, score: (o.m ? 0 : o.c ? 1 : 2) + o.mag / 10 - tr.above / 20 });
+    out.push({ o, tr, score: (o.m ? 0 : o.c ? 1 : 2) + (o.mag ?? 12) / 10 - tr.above / 20 });
   }
   out.sort((a, b) => a.score - b.score);
   return out.slice(0, n);
@@ -1081,8 +1109,8 @@ async function init() {
   q.onkeydown = (e) => { if (e.key === 'Enter' && listCache.length) selectObject(listCache[0].id); };
   $('#f-family').innerHTML = '<option value="">All types</option>' + Object.entries(FAMILY_LABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
   $('#f-src').innerHTML = '<option value="">All catalogs</option><option value="M">Messier</option><option value="C">Caldwell</option>' + Object.entries(SRC_LABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
-  for (const id of ['f-family', 'f-src', 'f-seen', 'f-maxmag', 'f-sort']) $('#' + id).onchange = () => { S.filters = { family: $('#f-family').value, src: $('#f-src').value, seen: $('#f-seen').value, maxmag: $('#f-maxmag').value }; S.sort = $('#f-sort').value; renderList(); };
-  $('#filters-toggle').onclick = () => { const on = $('.searchbar').classList.toggle('open'); $('#filters-toggle').textContent = on ? 'Hide filters' : 'Filters'; };
+  for (const id of ['f-family', 'f-src', 'f-seen', 'f-maxmag', 'f-sort']) $('#' + id).onchange = () => { S.filters = { family: $('#f-family').value, src: $('#f-src').value, seen: $('#f-seen').value, maxmag: $('#f-maxmag').value }; S.sort = $('#f-sort').value; renderList(); updateFilterButton(); };
+  $('#filters-toggle').onclick = () => { $('.searchbar').classList.toggle('open'); updateFilterButton(); };
   $('#list').onclick = (e) => { const r = e.target.closest('.row'); if (r) selectObject(r.dataset.id); };
   $$('nav button').forEach((b) => b.onclick = () => showTab(b.dataset.tab));
   document.body.addEventListener('click', (e) => { const a = e.target.closest('a[data-tab]'); if (a) { e.preventDefault(); showTab(a.dataset.tab); } });

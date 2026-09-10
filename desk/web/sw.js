@@ -3,7 +3,7 @@
  * ship state:   network first, cached copy when the ship is unreachable
  * DSS images:   cache on first load
  */
-const VERSION = 'astro-v2';
+const VERSION = 'astro-v4';
 const SHELL = ['/astro/', '/astro/index.html', '/astro/app.js', '/astro/planets.js', '/astro/style.css', '/astro/tile.svg', '/astro/manifest.json',
   '/astro/data/catalog.jsn', '/astro/data/stars.jsn', '/astro/data/lines.jsn'];
 
