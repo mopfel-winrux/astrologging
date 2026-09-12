@@ -99,6 +99,13 @@ Scries (all return JSON; over HTTP: `GET /~/scry/astro/<path>.json`):
 Subscribe to `/updates` for `%astro-update` facts. Object ids are the catalog
 ids (`NGC0224`, `IC0434`, `B033`, `SH2-155`, `LDN1773`, `HR7001`, `DBL-Albireo`).
 
+## Building your own Urbit app
+
+The process used to build this app is distilled into a separate public kit,
+[build-urbit-app](https://github.com/mopfel-winrux/build-urbit-app): a
+playbook (`SKILL.md`), a compiling template desk, and the boot/deploy/test
+scripts. Copy it anywhere and point an agent at it.
+
 ## Booting your own ship for it
 
 1. Boot a fake ship (or use a real one) and note its HTTP port and `+code`.

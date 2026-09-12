@@ -1089,6 +1089,109 @@ async function openPrintView(p) {
   $('#print-notes').onchange = (e) => pv.classList.toggle('no-notes', !e.target.checked);
 }
 
+// ------------------------------------------------------------ tonight
+const TN = { date: null, ni: null, rows: [], shown: 0, sort: 'best', family: '', src: '', hideSeen: true, minAlt: 30, obs: null };
+function tonightKey() { const d = new Date(); if (d.getHours() < 6) d.setDate(d.getDate() - 1); return dateKey(d.getTime()); }
+// closed-form visibility over the window: transit time, altitude at best moment, hours above `minAlt`
+function quickTrack(o, ni, minAlt) {
+  const lat = S.loc.lat, lon = S.loc.lon, t0 = ni.start.getTime(), t1 = ni.end.getTime();
+  const maxAlt = 90 - Math.abs(lat - o.dec);
+  if (maxAlt < minAlt) return null;
+  const lst0 = lst(new Date(t0), lon);
+  let transit = t0 + ((((o.ra - lst0) % 360) + 360) % 360) / 360.98564736629 * 86400000;
+  if (transit - 86164000 >= t0 - 43200000 && transit > t1) transit -= 86164000;   // the earlier transit is the relevant one
+  // hour angle (hours) at which the object crosses minAlt
+  const la = lat * D2R, de = o.dec * D2R;
+  const cosH = (Math.sin(minAlt * D2R) - Math.sin(la) * Math.sin(de)) / (Math.cos(la) * Math.cos(de));
+  const semi = cosH <= -1 ? 12 : cosH >= 1 ? 0 : Math.acos(cosH) * R2D / 15;   // hours each side of transit
+  const up0 = transit - semi * 3600000 * 0.99727, up1 = transit + semi * 3600000 * 0.99727;
+  const a = Math.max(up0, t0), b = Math.min(up1, t1);
+  const hours = Math.max(0, (b - a) / 3600000);
+  if (hours <= 0) return null;
+  const inWindow = transit >= t0 && transit <= t1;
+  const when = inWindow ? transit : (transit < t0 ? t0 : t1);
+  const alt = inWindow ? maxAlt : altAz(o.ra, o.dec, new Date(when), lat, lon).alt;
+  return { transit: new Date(transit), when: new Date(when), inWindow, alt, hours, first: new Date(a) };
+}
+function fameRank(o) { return o.m ? 0 : o.c ? 1 : o.src === 'SOL' ? 0 : o.cn ? 2 : o.src === 'DBL' || o.src === 'STAR' ? 3 : o.src === 'NGC' ? 4 : o.src === 'IC' ? 5 : 6; }
+function buildTonight() {
+  const noon = noonOf(TN.date || tonightKey());
+  const ni = nightInfo(noon); TN.ni = ni;
+  const moonUp = ni.moon.illum > 0.5 && ni.moonAltMid > 0;
+  const rows = [];
+  for (const o of S.catalog) {
+    if (o.n === 'Sun') continue;
+    if (TN.hideSeen && S.seen.has(o.id)) continue;
+    if (TN.family && o._fam !== TN.family) continue;
+    if (TN.src) { if (TN.src === 'M' && !o.m) continue; if (TN.src === 'C' && !o.c) continue; if (TN.src !== 'M' && TN.src !== 'C' && o.src !== TN.src) continue; }
+    const tr = quickTrack(o, ni, TN.minAlt); if (!tr) continue;
+    let score = fameRank(o) * 3 + ((o.mag ?? 13) / 3) - Math.min(tr.hours, 6) / 3;
+    if (moonUp && !['open', 'globular', 'double', 'planetary', 'star', 'planet'].includes(o._fam)) score += 4;
+    rows.push({ o, tr, score });
+  }
+  const cmp = { best: (a, b) => a.score - b.score, mag: (a, b) => (a.o.mag ?? 99) - (b.o.mag ?? 99), alt: (a, b) => b.tr.alt - a.tr.alt, time: (a, b) => a.tr.when - b.tr.when, number: (a, b) => numCmp(a.o, b.o) }[TN.sort] || ((a, b) => a.score - b.score);
+  rows.sort((a, b) => cmp(a, b) || numCmp(a.o, b.o));
+  TN.rows = rows; TN.shown = 0;
+}
+function renderTonight(rebuild = true) {
+  const el = $('#tonight'); if (!el) return;
+  if (!TN.date) TN.date = tonightKey();
+  if (rebuild) buildTonight();
+  const ni = TN.ni, p = currentPlan();
+  el.innerHTML = `
+    <div class="card">
+      <div class="searchbar">
+        <label>Night of <input type="date" id="tn-date" value="${TN.date}"></label>
+        <select id="tn-sort"><option value="best"${TN.sort === 'best' ? ' selected' : ''}>Recommended</option><option value="time"${TN.sort === 'time' ? ' selected' : ''}>Earliest first</option><option value="alt"${TN.sort === 'alt' ? ' selected' : ''}>Highest</option><option value="mag"${TN.sort === 'mag' ? ' selected' : ''}>Brightest</option><option value="number"${TN.sort === 'number' ? ' selected' : ''}>By number</option></select>
+        <select id="tn-family"><option value="">All types</option>${Object.entries(FAMILY_LABEL).map(([k, v]) => `<option value="${k}"${TN.family === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+        <select id="tn-src"><option value="">All catalogs</option><option value="M"${TN.src === 'M' ? ' selected' : ''}>Messier</option><option value="C"${TN.src === 'C' ? ' selected' : ''}>Caldwell</option>${Object.entries(SRC_LABEL).map(([k, v]) => `<option value="${k}"${TN.src === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+        <select id="tn-alt"><option value="20"${TN.minAlt === 20 ? ' selected' : ''}>above 20°</option><option value="30"${TN.minAlt === 30 ? ' selected' : ''}>above 30°</option><option value="45"${TN.minAlt === 45 ? ' selected' : ''}>above 45°</option></select>
+        <label><input type="checkbox" id="tn-seen"${TN.hideSeen ? ' checked' : ''}> hide seen</label>
+      </div>
+      <div class="night">
+        <span><b>Dark</b> ${hm(ni.darkStart)} – ${hm(ni.darkEnd)}</span>
+        <span><b>Moon</b> ${Math.round(ni.moon.illum * 100)}% ${ni.moon.waxing ? 'waxing' : 'waning'}${ni.moonRise ? `, rises ${hm(ni.moonRise)}` : ''}${ni.moonSet ? `, sets ${hm(ni.moonSet)}` : ''}${ni.moonAltMid < 0 && !ni.moonRise ? ', down all night' : ''}</span>
+        <span><b>${TN.rows.length.toLocaleString()}</b> objects above ${TN.minAlt}° at some point</span>
+        ${p ? `<span class="muted">＋ adds to plan "${esc(p.name)}"</span>` : '<span class="muted">＋ starts a plan for tonight</span>'}
+      </div>
+    </div>
+    <div id="tn-list" class="tn-list"></div>
+    <div id="tn-more" class="muted" style="text-align:center;padding:12px"></div>`;
+  $('#tn-date').onchange = (e) => { TN.date = e.target.value; renderTonight(); };
+  $('#tn-sort').onchange = (e) => { TN.sort = e.target.value; renderTonight(); };
+  $('#tn-family').onchange = (e) => { TN.family = e.target.value; renderTonight(); };
+  $('#tn-src').onchange = (e) => { TN.src = e.target.value; renderTonight(); };
+  $('#tn-alt').onchange = (e) => { TN.minAlt = Number(e.target.value); renderTonight(); };
+  $('#tn-seen').onchange = (e) => { TN.hideSeen = e.target.checked; renderTonight(); };
+  const list = $('#tn-list');
+  list.onclick = (e) => {
+    const add = e.target.closest('[data-add]'); if (add) { addToPlan(add.dataset.add); return; }
+    const row = e.target.closest('.row'); if (row) { selectObject(row.dataset.id); showTab('objects'); }
+  };
+  if (TN.obs) TN.obs.disconnect();
+  TN.obs = new IntersectionObserver((ents) => { if (ents.some((x) => x.isIntersecting)) appendTonight(); }, { rootMargin: '600px' });
+  TN.obs.observe($('#tn-more'));
+  appendTonight();
+}
+function appendTonight() {
+  const list = $('#tn-list'), more = $('#tn-more'); if (!list) return;
+  const chunk = TN.rows.slice(TN.shown, TN.shown + 60);
+  const frag = document.createElement('div');
+  frag.innerHTML = chunk.map(({ o, tr }) => {
+    const sn = S.seen.get(o.id);
+    return `<div class="row tn" data-id="${esc(o.id)}">
+      <div class="name">${esc(o.n)}${o.m ? `<span class="badge m">M ${o.m}</span>` : ''}${o.c ? `<span class="badge c">C ${o.c}</span>` : ''}${sn ? '<span class="badge seen">✓</span>' : ''}${o.cn ? ` <span class="muted">${esc(o.cn[0])}</span>` : ''}</div>
+      <div class="mag">${o.mag != null ? 'mag ' + fmt(o.mag, 1) : ''}</div>
+      <div class="sub">${esc(TYPE_LABEL[o.t] || o.t)} · ${esc(conName(o.con))} · ${esc(sizeStr(o))}</div>
+      <div class="tn-when">${tr.inWindow ? 'transits' : 'best'} <b>${hm(tr.when)}</b> at ${tr.alt.toFixed(0)}° · ${tr.hours.toFixed(1)} h above ${TN.minAlt}°</div>
+      <button class="small tn-add" data-add="${esc(o.id)}" title="Add to plan">＋</button>
+    </div>`;
+  }).join('');
+  while (frag.firstChild) list.appendChild(frag.firstChild);
+  TN.shown += chunk.length;
+  more.textContent = TN.shown < TN.rows.length ? `${TN.shown.toLocaleString()} of ${TN.rows.length.toLocaleString()} — scroll for more` : TN.rows.length ? `That's all ${TN.rows.length.toLocaleString()}.` : 'Nothing matches tonight.';
+}
+
 // ------------------------------------------------------------ navigation
 function selectObject(id) { S.sel = id; renderList(); renderDetail(); $('.split').classList.add('show-detail'); if (S.mobile) window.scrollTo(0, 0); const row = $(`.row[data-id="${CSS.escape(id)}"]`); if (row) row.scrollIntoView({ block: 'nearest' }); location.hash = id; }
 function showTab(name) {
@@ -1096,6 +1199,7 @@ function showTab(name) {
   $$('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + name));
   if (name === 'objects' && S.sel) { const o = S.byId.get(S.sel); if (o) setTimeout(() => drawChart(o), 0); }
   if (name === 'plan') renderPlan();
+  if (name === 'tonight') renderTonight();
 }
 
 // ------------------------------------------------------------ init
@@ -1145,4 +1249,4 @@ async function init() {
   }, 30000);
 }
 if (typeof window !== 'undefined') window.addEventListener('DOMContentLoaded', init);
-if (typeof module !== 'undefined') module.exports = { search, hintFor, nightInfo, nightTrack, suggestTargets, project, unproject, altAz, bestMonth, norm, S, prepCatalog, numCmp, TYPE_LABEL, FAMILY };
+if (typeof module !== 'undefined') module.exports = { search, hintFor, nightInfo, nightTrack, suggestTargets, quickTrack, project, unproject, altAz, bestMonth, norm, S, prepCatalog, numCmp, TYPE_LABEL, FAMILY };
